@@ -1,33 +1,31 @@
 // Imports
-const { Storage } = require('@google-cloud/storage');
-const getExif = require('exif-async');
-const parseDMS = require('parse-dms');
-
-// Imports More
+const {Storage} = require('@google-cloud/storage');
 const path = require('path');
 const fs = require('fs-extra');
 const os = require('os');
 const sharp = require('sharp');
+const {Firestore} = require('@google-cloud/firestore')
 
-F
-// Entry point function triggered by Cloud Storage event
-exports.generateThumbnail = async (object, context) => {
+// Imports
+const getExif = require('exif-async');
+const parseDMS = require('parse-dms');
 
-  const gcsFile = object;
+// Entry point function
+exports.generateThumbnail = async (file, context) => {
+  const gcsFile = file;
   const storage = new Storage();
   const sourceBucket = storage.bucket(gcsFile.bucket);
   const thumbnailsBucket = storage.bucket('sp24-41200-danish-gj-thumbnails');
   const finalBucket = storage.bucket('sp24-41200-danish-gj-final');
 
-
-  // Log file information
+  // HINT HINT HINT
   const version = process.env.K_REVISION;
   console.log(`Running Cloud Function version ${version}`);
-  console.log(`File name: ${gcsFile.name}`);
-  console.log(`Event type: ${context.eventType}`);
-  console.log(`Event ID: ${context.eventId}`);
 
-  
+  console.log(`File name: ${gcsFile.name}`);
+  console.log(`Generation number: ${gcsFile.generation}`);
+  console.log(`Content type: ${gcsFile.contentType}`);
+
   // Reject images that are not jpeg or png files
   let fileExtension = '';
   let validFile = false;
@@ -43,6 +41,7 @@ exports.generateThumbnail = async (object, context) => {
   } else {
     console.log('This is not a valid file.');
   }
+
   // If the file is a valid photograph, download it to the 'local' VM so that we can create a thumbnail image
   if (validFile) {
     // Create a new filename for the 'final' version of the image file
@@ -65,25 +64,35 @@ exports.generateThumbnail = async (object, context) => {
       destination: tempFilePath
     });
 
-    // Extract EXIF data
-try {
-  const exifData = await readExifData(tempFilePath);
-  if (exifData) {
-    const gpsDecimal = getGPSCoordinates(exifData);
-    if (gpsDecimal) {
+    async function extractExif() {
+      let gpsObject = await readExifData(tempFilePath);
+      console.log(gpsObject);
+      let gpsDecimal = getGPSCoordinates(gpsObject);
       console.log(gpsDecimal);
       console.log(gpsDecimal.lat);
       console.log(gpsDecimal.lon);
-    } else {
-      console.error('Invalid or missing GPS coordinates');
-    }
-  } else {
-    console.error('No EXIF data found');
+      firestoreLog(gpsDecimal)
   }
-} catch (error) {
-  console.error('Error extracting EXIF data:', error);
-}
 
+    extractExif();
+
+    async function firestoreLog(gpsDecimal) {
+      const firestore = new Firestore({
+        projectId: "sp24-41200-danish-globaljags"
+    });
+      let dataObject = {};
+      dataObject = {};
+      dataObject.thumbURL = `https://storage/thumb@64_${finalFileName}`;
+      dataObject.imageURL = `https://storage/${finalFileName}`;
+      dataObject.latitude = gpsDecimal.lat
+      dataObject.longitude = gpsDecimal.lon
+      console.log("The dataobject: ");
+      console.log(dataObject);
+
+      let collectionRef = firestore.collection('photos');
+      let documentRef = await collectionRef.add(dataObject);
+      console.log(`Document created: ${documentRef.id}`)
+  }
     // Upload our local version of the file to the final images bucket
     await finalBucket.upload(tempFilePath);
 
@@ -95,52 +104,61 @@ try {
     // This will be something like `tmp/thumbs/thumb@64_1234567891234567.jpg`
     const thumbPath = path.join(workingDir, thumbName);
 
+    //DataBase
+    dataObject.longitude = 234.434
     // Use the sharp library to generate the thumbnail image and save it to the thumbPath
     // Then upload the thumbnail to the thumbnailsBucket in cloud storage
     await sharp(tempFilePath).resize(64).withMetadata().toFile(thumbPath).then(async () => {
       await thumbnailsBucket.upload(thumbPath);
     })
 
-  // end of validFile==true
+    // Delete the temp working directory and its files from the GCF's VM
+    await fs.remove(workingDir);
 
+  } // end of validFile==true
 
-  // Delete the temp working directory and its files from the GCF's VM
-  await fs.remove(workingDir);
-  // DELETE the original file uploaded to the source bucket
+  // DELETE the original file uploaded to the "Uploads" bucket
   await sourceBucket.file(gcsFile.name).delete();
   console.log(`Deleted uploaded file: ${gcsFile.name}`);
-};
-
-// Helper function to extract EXIF data
 }
 
+// // Entry Point Function
+// async function extractExif() {
+//     let gpsObject = await readExifData('china1.jpeg');
+//     console.log(gpsObject);
+//     let gpsDecimal = getGPSCoordinates(gpsObject);
+//     console.log(gpsDecimal);
+//     console.log(gpsDecimal.lat);
+//     console.log(gpsDecimal.lon);
+// }
+
+// // Call the Entry Point (not needed in GCF)
+// extractExif();
+
+
+// Helper Functions
 async function readExifData(localFile) {
-  let exifData;
-  try {
-      exifData = await getExif(localFile);
-      // console.log(exifData);
-      // console.log(exifData.gps);
-      // console.log(exifData.gps.GPSLatitude);
-      return exifData.gps;
-  } catch(err) {
-      console.log(err);
-      return null;
-  }
+    let exifData;
+    try {
+        exifData = await getExif(localFile);
+        // console.log(exifData);
+        // console.log(exifData.gps);
+        // console.log(exifData.gps.GPSLatitude);
+        return exifData.gps;
+    } catch(err) {
+        console.log(err);
+        return null;
+    }
 }
 
 function getGPSCoordinates(g) {
-  if (!g || !g.GPSLatitude || !g.GPSLongitude || !g.GPSLatitudeRef || !g.GPSLongitudeRef) {
-    console.error('Invalid or missing GPS metadata');
-    return null;
-  }
-  const latString = `${g.GPSLatitude[0]}:${g.GPSLatitude[1]}:${g.GPSLatitude[2]}${g.GPSLatitudeRef}`;
-  const lonString = `${g.GPSLongitude[0]}:${g.GPSLongitude[1]}:${g.GPSLongitude[2]}${g.GPSLongitudeRef}`;
-  const degCoords = parseDMS(`${latString} ${lonString}`);
-  if (!degCoords) {
-    console.error('Error parsing GPS coordinates');
-    return null;
-  }
-  console.log(`${latString} ${lonString}`);
-  return degCoords;
-}
+    // PARSE DMS needs a string in the format of:
+    // 51:30:0.5486N 0:7:34.4503W
+    // DEG:MIN:SECDIRECTION DEG:MIN:SECDIRECTION
+    const latString = `${g.GPSLatitude[0]}:${g.GPSLatitude[1]}:${g.GPSLatitude[2]}${g.GPSLatitudeRef}`;
+    const lonString = `${g.GPSLongitude[0]}:${g.GPSLongitude[1]}:${g.GPSLongitude[2]}${g.GPSLongitudeRef}`;
 
+    const degCoords = parseDMS(`${latString} ${lonString}`);
+
+    return degCoords;
+}
