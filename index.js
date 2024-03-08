@@ -82,7 +82,7 @@ exports.generateThumbnail = async (file, context) => {
     });
       let dataObject = {};
       dataObject = {};
-      dataObject.thumbURL = `https://storage/thumb@64_${finalFileName}`;
+      dataObject.thumbURL = `https://storage.googleapis.com/sp24-41200-danish-gj-thumbnails/thumb%4064_${finalFileName}`;
       dataObject.imageURL = `https://storage/${finalFileName}`;
       dataObject.latitude = gpsDecimal.lat
       dataObject.longitude = gpsDecimal.lon
@@ -105,7 +105,7 @@ exports.generateThumbnail = async (file, context) => {
     const thumbPath = path.join(workingDir, thumbName);
 
     //DataBase
-    dataObject.longitude = 234.434
+    // dataObject.longitude = 234.434
     // Use the sharp library to generate the thumbnail image and save it to the thumbPath
     // Then upload the thumbnail to the thumbnailsBucket in cloud storage
     await sharp(tempFilePath).resize(64).withMetadata().toFile(thumbPath).then(async () => {
